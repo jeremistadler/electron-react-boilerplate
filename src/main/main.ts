@@ -9,7 +9,7 @@
  * `./src/main.js` using webpack. This gives us some performance wins.
  */
 import path from 'path';
-import { app, BrowserWindow, shell, ipcMain } from 'electron';
+import { app, BrowserWindow, shell, ipcMain, ipcRenderer } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import MenuBuilder from './menu';
@@ -90,9 +90,13 @@ ipcMain.handle('fetchDriveFiles', (event, driveName) => {
   return readdirRecursive(driveName);
 });
 
-ipcMain.on('startImport', async (event, arg) => {
-  if (typeof arg !== 'string' || !arg) {
-    return Promise.reject(new Error('Invalid startImport disk prop'));
+ipcMain.on('startImport', async (event, path, deleteOnMove) => {
+  if (typeof path !== 'string' || !path) {
+    return Promise.reject(new Error('Invalid startImport path prop'));
+  }
+
+  if (typeof deleteOnMove !== 'boolean') {
+    return Promise.reject(new Error('Invalid startImport deleteOnMove'));
   }
 
   event.reply('importStatus', {
@@ -100,15 +104,15 @@ ipcMain.on('startImport', async (event, arg) => {
     message: 'Hämtar lista på filer...',
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
 
   try {
-    const files = await readdirRecursive(arg);
+    const files = await readdirRecursive(path);
 
-    await importImages(files, (progress, message) => {
+    await importImages(files, deleteOnMove, (progress, message) => {
       event.reply('importStatus', { progress, message });
     });
-  } catch (error) {
+  } catch (error: any) {
     event.reply('importStatus', {
       progress: 100,
       message: error instanceof Error ? error.message : String(error),

@@ -1,5 +1,5 @@
 import { join } from 'path';
-import { mkdir, cp, stat } from 'fs/promises';
+import { mkdir, cp, stat, constants, unlink } from 'fs/promises';
 import { FileStatInfo } from 'sharedTypes';
 import { pMap } from './pMap';
 import { createHash } from 'node:crypto';
@@ -10,36 +10,35 @@ const BaoBaoDir = '/Users/Shared/baobao/source';
 
 export async function importImages(
   files: FileStatInfo[],
+  deleteOnMove: boolean,
   reportProgress: (progress: number, message: string) => void
 ) {
   const targetFilenames = new Set<string>();
 
   const mappedFiles = files.map((file) => {
     const dateWithOffset = new Date(file.createdTime - LATE_NIGHT_TIME_OFFSET);
-    const date = new Date(file.createdTime);
     const folderName =
-      dateWithOffset.toLocaleDateString('sv-SE', {
-        year: 'numeric',
-        month: 'numeric',
-        day: 'numeric',
-        timeZone: 'Europe/Stockholm',
-      }) +
+      dateWithOffset.getFullYear() +
       ' ' +
       dateWithOffset.toLocaleDateString('sv-SE', {
         month: 'short',
         timeZone: 'Europe/Stockholm',
       });
 
-    const time = date
-      .toLocaleTimeString('sv-SE', {
-        minute: 'numeric',
-        second: 'numeric',
-        hour: 'numeric',
+    const time =
+      dateWithOffset
+        .toLocaleDateString('sv-SE', {
+          day: '2-digit',
+          timeZone: 'Europe/Stockholm',
+        })
+        .replaceAll(':', '_')
+        .replaceAll(' ', '_')
+        .replaceAll('/', '_') +
+      ' ' +
+      dateWithOffset.toLocaleDateString('sv-SE', {
+        month: 'short',
         timeZone: 'Europe/Stockholm',
-      })
-      .replaceAll(':', '_')
-      .replaceAll(' ', '_')
-      .replaceAll('/', '_');
+      });
 
     let targetPath = join(
       BaoBaoDir,
@@ -51,7 +50,7 @@ export async function importImages(
       join(
         BaoBaoDir,
         folderName + '/',
-        time + '-' + index + '.' + file.path.split('.').pop()!.toLowerCase()
+        time + ' ' + index + '.' + file.path.split('.').pop()!.toLowerCase()
       );
 
     for (let index = 1; targetFilenames.has(targetPath); index++) {
@@ -80,13 +79,10 @@ export async function importImages(
     await mkdir(file.targetFolder, { recursive: true });
   }
 
-  await pMap(mappedFiles, async (file, i) => {
-    const now = performance.now();
-    if (lastProgressReport + 100 < now) {
-      lastProgressReport = now;
-      reportProgress((i / files.length) * 100, file.targetPath);
-    }
+  let sentBytes = 0;
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
 
+  await pMap(mappedFiles, async (file, i) => {
     for (let index = 0; ; index++) {
       try {
         await cp(file.source.path, file.targetPath, {
@@ -94,11 +90,15 @@ export async function importImages(
           force: false,
           errorOnExist: true,
         });
+
+        if (deleteOnMove) await unlink(file.source.path);
       } catch (error: any) {
         if (error.code === 'EEXIST' || error.code === 'ERR_FS_CP_EEXIST') {
           const isSame = await isFileEqual(file.source, file.targetPath);
 
           if (isSame) {
+            if (deleteOnMove) await unlink(file.source.path);
+
             break;
           } else {
             file.targetPath = file.generateNextTargetPath(index);
@@ -109,11 +109,26 @@ export async function importImages(
         throw error;
       }
     }
+
+    const now = performance.now();
+    sentBytes += file.source.size;
+
+    if (now > lastProgressReport + 100) {
+      lastProgressReport = now;
+      reportProgress(
+        (sentBytes / totalBytes) * 100,
+        `${bytesToGb(sentBytes)} av ${bytesToGb(totalBytes)} GB klart`
+      );
+    }
   });
 
   await new Promise((resolve) => setTimeout(resolve, 100));
 
   reportProgress(100, 'Klar!');
+}
+
+function bytesToGb(bytes: number) {
+  return (bytes / 1024 / 1024 / 1024).toFixed(1);
 }
 
 async function isFileEqual(pathA: FileStatInfo, pathB: string) {

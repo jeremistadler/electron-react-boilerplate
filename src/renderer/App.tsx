@@ -84,6 +84,7 @@ function DriveInfo({ drive }: { drive: Partition }) {
     message: string;
     success?: boolean;
   } | null>(null);
+  const [deleteOnMove, setDeleteOnMove] = useState(true);
 
   useEffect(() => {
     window.electron.ipcRenderer
@@ -134,6 +135,16 @@ function DriveInfo({ drive }: { drive: Partition }) {
         marginTop: '20px',
       }}
     >
+      <div className="row2">
+        <input
+          type="checkbox"
+          id="deleteOnMove"
+          checked={deleteOnMove}
+          onChange={(e) => setDeleteOnMove(e.target.checked)}
+        />
+        <label htmlFor="deleteOnMove">Radera filer från minneskortet</label>
+      </div>
+
       {[...dateStats.entries()].map(([, date]) => {
         const jpgs = date.exts.get('jpg') ?? [];
 
@@ -176,34 +187,41 @@ function DriveInfo({ drive }: { drive: Partition }) {
                   marginTop: '10px',
                 }}
               >
-                {expandedDates.includes(date.date)
+                {progress != null
+                  ? null
+                  : expandedDates.includes(date.date)
                   ? jpgs.map((jpg) => <Image path={jpg.path} key={jpg.path} />)
                   : jpgIndexes.map((i) => (
                       <Image path={jpgs[i].path} key={jpgs[i].path} />
                     ))}
 
-                {jpgIndexes.length !== jpgs.length &&
-                  !expandedDates.includes(date.date) && (
-                    <button
-                      style={{
-                        alignSelf: 'center',
-                        border: 'none',
-                        padding: '5px 10px',
-                        backgroundColor: 'white',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                      }}
-                      onClick={() =>
-                        setExpandedDates((old) => old.concat(old, date.date))
-                      }
-                    >
-                      Visa alla bilder ({jpgs.length - jpgIndexes.length} fler)
-                    </button>
-                  )}
+                {progress != null
+                  ? null
+                  : jpgIndexes.length !== jpgs.length &&
+                    !expandedDates.includes(date.date) && (
+                      <button
+                        style={{
+                          alignSelf: 'center',
+                          border: 'none',
+                          padding: '5px 10px',
+                          backgroundColor: 'white',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                        }}
+                        onClick={() =>
+                          setExpandedDates((old) => old.concat(old, date.date))
+                        }
+                      >
+                        Visa alla bilder ({jpgs.length - jpgIndexes.length}{' '}
+                        fler)
+                      </button>
+                    )}
               </div>
             )}
 
-            {expandedVideoDates.includes(date.date)
+            {progress != null
+              ? null
+              : expandedVideoDates.includes(date.date)
               ? date.exts
                   .get('mp4')
                   ?.map((file) => (
@@ -224,42 +242,46 @@ function DriveInfo({ drive }: { drive: Partition }) {
                   )) ?? null
               : null}
 
-            {(date.exts.get('mp4')?.length ?? 0) > 0 &&
-              !expandedVideoDates.includes(date.date) && (
-                <video
-                  style={{ marginTop: '10px', marginRight: '10px' }}
-                  src={`file:${date.exts.get('mp4')![0].path}`}
-                  height="100px"
-                  loop
-                  autoPlay
-                  muted
-                  onClick={() =>
-                    window.electron.ipcRenderer.invoke(
-                      'openFile',
-                      `file:${date.exts.get('mp4')![0].path}`
-                    )
-                  }
-                />
-              )}
+            {progress != null
+              ? null
+              : (date.exts.get('mp4')?.length ?? 0) > 0 &&
+                !expandedVideoDates.includes(date.date) && (
+                  <video
+                    style={{ marginTop: '10px', marginRight: '10px' }}
+                    src={`file:${date.exts.get('mp4')![0].path}`}
+                    height="100px"
+                    loop
+                    autoPlay
+                    muted
+                    onClick={() =>
+                      window.electron.ipcRenderer.invoke(
+                        'openFile',
+                        `file:${date.exts.get('mp4')![0].path}`
+                      )
+                    }
+                  />
+                )}
 
-            {(date.exts.get('mp4')?.length ?? 0) > 1 &&
-              !expandedVideoDates.includes(date.date) && (
-                <button
-                  style={{
-                    alignSelf: 'center',
-                    border: 'none',
-                    padding: '5px 10px',
-                    backgroundColor: 'white',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                  }}
-                  onClick={() =>
-                    setExpandedVideoDates((old) => old.concat(old, date.date))
-                  }
-                >
-                  + {date.exts.get('mp4')!.length - 1} fler filmer
-                </button>
-              )}
+            {progress != null
+              ? null
+              : (date.exts.get('mp4')?.length ?? 0) > 1 &&
+                !expandedVideoDates.includes(date.date) && (
+                  <button
+                    style={{
+                      alignSelf: 'center',
+                      border: 'none',
+                      padding: '5px 10px',
+                      backgroundColor: 'white',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                    }}
+                    onClick={() =>
+                      setExpandedVideoDates((old) => old.concat(old, date.date))
+                    }
+                  >
+                    + {date.exts.get('mp4')!.length - 1} fler filmer
+                  </button>
+                )}
           </div>
         );
       })}
@@ -271,9 +293,14 @@ function DriveInfo({ drive }: { drive: Partition }) {
         className="fullWidthButton"
         onClick={() => {
           if (progress == null || progress.progress === 100) {
+            setExpandedVideoDates([]);
+            setExpandedDates([]);
+            setProgress(null);
+
             window.electron.ipcRenderer.sendMessage(
               'startImport',
-              drive.MountPoint
+              drive.MountPoint,
+              deleteOnMove
             );
           }
         }}
