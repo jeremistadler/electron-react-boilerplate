@@ -14,6 +14,10 @@ import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
+import { exec } from 'child_process';
+import { parse } from 'plist';
+import { readdirRecursive } from './readdirRecursive';
+import { importImages } from './importImages';
 
 class AppUpdater {
   constructor() {
@@ -25,10 +29,92 @@ class AppUpdater {
 
 let mainWindow: BrowserWindow | null = null;
 
-ipcMain.on('ipc-example', async (event, arg) => {
-  const msgTemplate = (pingPong: string) => `IPC test: ${pingPong}`;
-  console.log(msgTemplate(arg));
-  event.reply('ipc-example', msgTemplate('pong'));
+function readDiskutil() {
+  return new Promise((resolve, reject) => {
+    exec('diskutil list -plist', (err, stdout, stderr) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      if (stderr) {
+        reject(stderr);
+        return;
+      }
+
+      const result = parse(stdout);
+
+      resolve(result);
+    });
+  });
+}
+
+ipcMain.handle('listDrives', () => {
+  return readDiskutil();
+});
+
+ipcMain.handle('openFile', (event, arg) => {
+  if (typeof arg !== 'string' || !arg) {
+    return Promise.reject(new Error('Invalid openFile disk prop'));
+  }
+  return shell.openExternal('file:' + arg);
+});
+
+ipcMain.handle('unmountDisk', (event, arg) => {
+  if (typeof arg !== 'string' || !arg) {
+    return Promise.reject(new Error('Invalid unmountDisk disk prop'));
+  }
+
+  return new Promise((resolve, reject) => {
+    exec('diskutil unmountdisk ' + arg, (err, stdout, stderr) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      if (stderr) {
+        reject(stderr);
+        return;
+      }
+
+      resolve(stdout);
+    });
+  });
+});
+
+ipcMain.handle('fetchDriveFiles', (event, driveName) => {
+  if (typeof driveName !== 'string' || !driveName) {
+    return Promise.reject(new Error('Invalid fetchDriveInfo disk prop'));
+  }
+
+  return readdirRecursive(driveName);
+});
+
+ipcMain.on('startImport', async (event, arg) => {
+  if (typeof arg !== 'string' || !arg) {
+    return Promise.reject(new Error('Invalid startImport disk prop'));
+  }
+
+  event.reply('importStatus', {
+    progress: 0,
+    message: 'Hämtar lista på filer...',
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  try {
+    const files = await readdirRecursive(arg);
+
+    await importImages(files, (progress, message) => {
+      event.reply('importStatus', { progress, message });
+    });
+  } catch (error) {
+    event.reply('importStatus', {
+      progress: 100,
+      message: error instanceof Error ? error.message : String(error),
+      success: false,
+    });
+  }
 });
 
 if (process.env.NODE_ENV === 'production') {
@@ -71,10 +157,15 @@ const createWindow = async () => {
 
   mainWindow = new BrowserWindow({
     show: false,
-    width: 1024,
+    width: 512,
     height: 728,
     icon: getAssetPath('icon.png'),
     webPreferences: {
+      webSecurity: false,
+      sandbox: false,
+      nodeIntegration: true,
+      //contextIsolation: false,
+
       preload: app.isPackaged
         ? path.join(__dirname, 'preload.js')
         : path.join(__dirname, '../../.erb/dll/preload.js'),
